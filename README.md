@@ -164,7 +164,7 @@ State-changing routes require a same-origin request and are rate-limited per IP.
 
 ## Screenshots
 
-`docs/screenshots/`: captured on the live deployment: landing (`01`), sign-in (`02`), empty workspace (`03`), guest analysis with verdict banner (`04`), dark mode with learning after reload (`05`), inbox connection (`06`), mobile (`07`, `08`).
+`docs/screenshots/`: captured on the live deployment: landing (`01`), sign-in (`02`), empty workspace (`03`), guest analysis with verdict banner (`04`), dark mode with learning after reload (`05`), inbox connection (`06`), mobile (`07`, `08`), Inbox drawer with **Connect Gmail via Composio** (`09`), Connect Gmail result on the live deployment (`10`).
 
 ## Roadmap
 
