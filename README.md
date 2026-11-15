@@ -148,7 +148,7 @@ State-changing routes require a same-origin request and are rate-limited per IP.
 
 ## Screenshots
 
-`docs/screenshots/`: landing (`01`), sign-in (`02`), empty workspace (`03`), analysis (`04`), dark mode with learning (`05`), inbox connection (`06`), mobile (`07`, `08`).
+`docs/screenshots/`: captured on the live deployment: landing (`01`), sign-in (`02`), empty workspace (`03`), guest analysis with verdict banner (`04`), dark mode with learning after reload (`05`), inbox connection (`06`), mobile (`07`, `08`).
 
 ## Roadmap
 
