@@ -1,29 +1,109 @@
+<div align="center">
+
 # Teger Agent
 
-**Teger Agent, built on [SERV Reasoning](https://docs.openserv.ai/serv-reasoning/introduction):** an autonomous phishing and social-engineering investigator.
+**Connect your mail or paste a suspicious link. An autonomous agent built on [SERV Reasoning](https://docs.openserv.ai/serv-reasoning/introduction) investigates it like a security analyst, and a deterministic engine gives a verdict that a prompt-injected email can't argue with.**
 
-Built by **DUKERS LTD (Emmanuel Effiom Duke)** for the **OpenServ SERV Hackathon 02 (Open Track)**.
+[![CI](https://github.com/dukemawex/teger-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/dukemawex/teger-agent/actions/workflows/ci.yml)
+[![Live demo](https://img.shields.io/badge/live-teger--agent.vercel.app-ff6b00)](https://teger-agent.vercel.app)
+[![Built on SERV Reasoning](https://img.shields.io/badge/built%20on-SERV%20Reasoning-1a1714)](https://docs.openserv.ai/serv-reasoning/introduction)
+[![Eval](https://img.shields.io/badge/eval-10%2F10%20live%20SERV%20%C2%B7%2010%2F10%20compromised--LLM-2ea043)](docs/EVAL.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Live:** https://teger-agent.vercel.app · **Workspace:** https://teger-agent.vercel.app/app
+**[Live demo](https://teger-agent.vercel.app)** · **[Workspace](https://teger-agent.vercel.app/app)** · [Eval results](docs/EVAL.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](SECURITY.md)
 
-![Teger Agent workspace investigating a fake email-hosting renewal](docs/screenshots/04-analysis-light.png)
+OpenServ **SERV Hackathon 02, Open Track** · built by **DUKERS LTD** (Emmanuel Effiom Duke)
 
-Sign in (or continue as a guest), then **connect Gmail in one click through [Composio](https://composio.dev)**, upload an `.eml`, paste a message, or press a simulated attack. Teger Agent:
+</div>
 
-1. **Observes**: fences the message as untrusted data and extracts the links and domains in scope.
-2. **Plans**: SERV Reasoning decides which tools to call and says why.
-3. **Investigates**: it calls real tools through SERV function calling: Teger's detectors, SPF/DKIM/DMARC, RDAP domain age, look-alike checks, SSRF-safe link resolution, brand research and optional isolated screenshots.
-4. **Decides**: a **deterministic policy** produces the verdict. The language model cannot change it.
-5. **Explains**: SERV Reasoning writes a plain-language explanation and what to do instead. Evidence quotes come from the engine, not the model.
+![Teger Agent checking a pasted look-alike PayPal link: malicious, with evidence cards](docs/screenshots/11-link-check-malicious.png)
 
-Each analysis appears as a message in a chat-style thread: the verdict banner, evidence cards with quotes, and the full agent trace (tool, reason, input, output, timing). Feedback (**Confirm scam** / **It's legit**) goes into your account's block/allow lists, the next run uses them, and the trace says `Teger learned: …`.
+## Try it in 30 seconds (no sign-up)
+
+1. Open **https://teger-agent.vercel.app/app**. Guest mode starts automatically.
+2. Click a **Try a link** chip (for example `paypa1-secure-login.top/verify`), or paste any link or whole email into the box and press the arrow.
+3. Watch the agent trace stream: SERV plans, tools run, the policy decides, and SERV explains. Open **Agent trace** to see every tool call with its `why`, the SERV call count and the tokens used.
+4. Click a **simulated attack** (fake renewal, BEC/IBAN change, reset storm with code relay, OAuth consent, QR parcel, hidden prompt injection) or the **benign control**.
+5. Click **Confirm scam**, then run it again: the trace says `Teger learned: …`.
+6. Optional: **Connect mail** links Gmail via Composio (read, label and draft only), or use IMAP or an `.eml` file.
+
+You can also deep-link a check: `https://teger-agent.vercel.app/app?link=paypa1-secure-login.top/verify`. `GET /api/health` shows which integrations are live (never their values).
+
+## How SERV Reasoning is used
+
+SERV is the agent's **planner and explainer**. It decides what to investigate, calls tools, and writes the explanation. It is not a classifier glued on at the end.
+
+| What | Where |
+|---|---|
+| OpenAI SDK pointed at **`https://inference-api.openserv.ai/v1`**, key `SERV_API_KEY`, 45 s timeout | [`serv.ts` L8](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/serv.ts#L5-L10), [`agent.ts` L14](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/agent.ts#L14) |
+| **System prompt on every request** (planner `SYSTEM_PROMPT`, explainer `EXPLAIN_PROMPT`); tests assert `messages[0].role === "system"` on every call | [`agent.ts` L73-L85](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/agent.ts#L73-L85), [`tests/agent.test.ts`](tests/agent.test.ts) |
+| Message fenced as `<untrusted_message>` data | [`agent.ts` L87](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/agent.ts#L87-L90) |
+| **Tool-calling loop**: `chat.completions` with 7 function tools, `tool_choice: "auto"`, `parallel_tool_calls: true`; each call carries a `why` shown in the trace; tool results go back as `role: "tool"` messages | [`agent.ts` L159-L189](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/agent.ts#L159-L189), [`tools.ts` L70-L78](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/tools.ts#L70-L78) |
+| Budgets: 8 tool steps, 60k tokens, then deterministic completion | [`agent.ts` L16-L17](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/agent.ts#L16-L17) |
+| **Explainer**: second SERV call in JSON mode (`response_format: json_object`), then the `sanitizeExplanation` guardrail | [`agent.ts` L218-L240](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/agent.ts#L218-L240), [`L297-L332`](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/agent.ts#L297-L332) |
+| Fallback when SERV is down or the key is missing: same tools in a fixed order, labelled `planner: "fallback"` with a visible note | [`agent.ts` L190-L212](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/agent.ts#L190-L212) |
+
+Model: `gpt-5.4-mini` by default (`SERV_MODEL` to change). In the live eval, SERV made **47 calls (84k tokens) across 10 cases**, choosing a different tool plan per message: for example `analyze_message → check_sender_auth → inspect_domain → research_brand → inspect_link → decide` for the fake renewal, and `analyze_message → inspect_domain → decide` for the gift-card scam.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  U[Workspace /app<br/>paste link or email, .eml, inbox] -- message --> API[/api/agent<br/>NDJSON stream/]
+  API --> OBS[Observe: link-only detection,<br/>fence as untrusted, domains in scope,<br/>learned lists]
+  OBS --> LOOP{SERV Reasoning<br/>chat.completions + tool calling<br/>≤ 8 tool steps, 60k tokens}
+  LOOP -- tool calls + why --> T1[analyze_message<br/>Teger detectors]
+  LOOP --> T2[check_sender_auth<br/>SPF/DKIM/DMARC, Reply-To]
+  LOOP --> T3[inspect_domain<br/>RDAP age + look-alikes]
+  LOOP --> T4[inspect_link<br/>SSRF-safe redirect resolution]
+  LOOP --> T5[research_brand<br/>official domains]
+  LOOP --> T6[preview_site<br/>isolated screenshot, optional]
+  T1 & T2 & T3 & T4 & T5 & T6 --> EV[(Evidence<br/>written by tools only)]
+  LOOP --> D[decide: deterministic policy<br/>+ learned allow/block]
+  EV --> D
+  D -- verdict locked --> EX[Explain: SERV JSON mode<br/>→ sanitizeExplanation guardrail]
+  EX --> OUT[verdict, banner, evidence quotes,<br/>what to do, full trace]
+  OUT --> U
+  U -- Confirm scam / It's legit --> MEM[(Upstash Redis<br/>lists + history)]
+  MEM --> OBS
+  INBOX[Gmail via Composio · IMAP · .eml] --> API
+```
+
+More detail, including the file map and failure modes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Safety model
+
+- **The verdict is deterministic.** [`policy.decide`](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/engine/policy.ts#L39) is a pure function of evidence and detector coverage. Tools write evidence straight into the run state, and the model only sees summaries. [`decide`](https://github.com/dukemawex/teger-agent/blob/f82e183ffece400713dd577d4236abedc03cde7b/src/lib/agent/tools.ts#L290-L313) always includes the local detectors, even if the model skipped them.
+- **Model output is untrusted too.** The explainer's text may only cite real evidence IDs. Anything that reassures ("safe", "looks legitimate", "not a scam"), contains a link, or tells you to act on a risky message is dropped, and the trace says so.
+- **Message content is untrusted data.** It is fenced and never followed. Instructions aimed at AI assistants, including hidden HTML and zero-width text, are themselves evidence (`hidden_prompt_injection`).
+- **Scoped tools + SSRF-safe network.** Tools only touch domains and links that appear in the message. Fetches block private, loopback, link-local, CGNAT, metadata, multicast, reserved and IPv4-mapped ranges, re-check every redirect, allow ports 80/443 only, and are capped at 6 s and 200 KB. Nothing is opened on your device.
+- **Never sends or deletes mail.** Composio sessions are pinned to read, label and draft tools only. IMAP and OAuth secrets are AES-256-GCM encrypted at rest.
+- **Never says "safe".** The best verdict is "No warning signs found."
 
 | Verdict | Banner |
 |---|---|
 | `malicious` | Don't trust this. Don't click links, open attachments, reply, or pay. |
 | `suspicious` | Be careful. Verify through a channel you already trust. |
 | `unknown` | We couldn't fully check this. Treat it with caution. |
-| `no_threat_detected` | No warning signs found. *(never "safe")* |
+| `no_threat_detected` | No warning signs found. |
+
+Threat model and known gaps: [SECURITY.md](SECURITY.md).
+
+## Evaluation
+
+`npm run eval` runs the 8 simulated emails and 2 sample links through the full agent ([eval/fixtures.eval.ts](eval/fixtures.eval.ts)). Full table: [docs/EVAL.md](docs/EVAL.md).
+
+| Mode | Correct verdicts | SERV usage |
+|---|---|---|
+| deterministic | 10/10 | – |
+| compromised-llm | 10/10 | – |
+| serv-live | 10/10 | 47 calls, 84,471 tokens, median 6345 ms |
+
+- **deterministic**: no LLM, offline. This mode runs in CI on every push.
+- **compromised-llm**: a SERV mock that *obeys the attacker*. It says "safe", skips the investigation, aims tools at `169.254.169.254`, and returns a fake "verified sender" explanation with a phishing link. Every verdict still matches, and none of that text reaches the user.
+- **serv-live**: real SERV Reasoning with live RDAP and link lookups.
+
+Tests: **164 in CI** plus 2 opt-in live checks (unit tests for every detector family and the policy, tools with a mocked network, the SERV loop with a scripted mock, adversarial injection, link checks, auth, history, inbox and Composio). SERV is mocked, so CI needs no key.
 
 ## What it detects
 
@@ -44,47 +124,6 @@ Detectors added for AI-era attacks:
 | `reply_to_mismatch`, `dmarc_fail`, `spf_fail`, `dkim_fail` | Header-based sender checks |
 | `newly_registered_domain`, `redirect_to_other_domain`, `credential_form_on_untrusted_domain` | Live domain and link intelligence |
 
-## Architecture
-
-```mermaid
-flowchart LR
-  U[User / workspace /app] -- message --> API[/api/agent NDJSON stream/]
-  API --> OBS[Observe: fence as untrusted data, extract IOCs, load learned lists]
-  OBS --> LOOP{{SERV Reasoning<br/>chat.completions + tool calling<br/>max 8 tool steps, token budget}}
-  LOOP -- tool calls --> T1[analyze_message<br/>Teger detectors]
-  LOOP --> T2[check_sender_auth<br/>SPF/DKIM/DMARC, Reply-To]
-  LOOP --> T3[inspect_domain<br/>RDAP age + look-alikes]
-  LOOP --> T4[inspect_link<br/>SSRF-safe redirect resolution]
-  LOOP --> T5[research_brand<br/>Parallel search / reference list]
-  LOOP --> T6[preview_site<br/>Instabox, optional]
-  T1 & T2 & T3 & T4 & T5 & T6 --> EV[(Evidence store<br/>written by tools only)]
-  LOOP --> D[decide: deterministic policy<br/>+ learned allow/block list]
-  EV --> D
-  D -- verdict locked --> EX[Explain: SERV writes summary + steps<br/>quotes from evidence]
-  EX --> OUT[Strict JSON: verdict, banner, reasons, what to do, trace]
-  OUT --> U
-  U -- Confirm scam / It's legit --> FB[/api/feedback/] --> MEM[(Upstash Redis: per-user lists + history)]
-  INBOX[Gmail via Composio / IMAP / .eml] --> API
-  MEM --> OBS
-```
-
-## How SERV Reasoning is used
-
-- **Endpoint**: `POST https://inference-api.openserv.ai/v1/chat/completions` through the OpenAI SDK (`baseURL` set to that URL, `apiKey` from `SERV_API_KEY`). See [`src/lib/agent/serv.ts`](src/lib/agent/serv.ts).
-- **Model**: `gpt-5.4-mini` by default (from the SERV docs and confirmed against `GET /v1/models`). You can change it with `SERV_MODEL`.
-- **System prompt on every request**: the planner uses `SYSTEM_PROMPT` and the explainer uses `EXPLAIN_PROMPT` (see [`src/lib/agent/agent.ts`](src/lib/agent/agent.ts)). SERV rejects requests that don't have one, and the tests check that every call includes it.
-- **Tool calling**: seven function tools ([`src/lib/agent/tools.ts`](src/lib/agent/tools.ts)), with parallel tool calls allowed. Each call must carry a `why`, and that reason is shown in the audit trail.
-- **Explanation**: a second SERV call with `response_format: json_object` writes the summary, reasons (which must reference real evidence IDs) and next steps. If the summary contains "safe", or a reason doesn't match real evidence, it is discarded.
-- **Fallback**: if the key is missing or SERV errors, a deterministic planner runs the same tools in a fixed order. The UI and JSON label this clearly (`planner: "fallback"`).
-
-## Safety design
-
-- **The verdict is deterministic.** Tools write evidence straight into the run state, and the model only sees summaries. `decide` always includes the local detectors, even if the model skips `analyze_message`. Planner calls never let the model add evidence, and explainer output can't touch the verdict, score or quotes.
-- **Message content is untrusted.** It is fenced in `<untrusted_message>` tags and the system prompt forbids following it. Text inside the message that targets an AI is itself flagged as evidence.
-- **Scoped tools.** `inspect_domain`, `inspect_link` and `preview_site` only accept domains and links that appear in the submitted message. A prompt injection can't point the agent at internal or arbitrary targets (this is tested).
-- **SSRF-safe fetch.** Lookups block private, loopback, link-local, CGNAT, metadata, multicast and reserved IPv4/IPv6 ranges. Every redirect hop is re-checked, only ports 80/443 are allowed, URLs with credentials are refused, and each fetch is capped at 6 s and 200 KB. Nothing is opened on the user's device.
-- **No automatic actions.** Nothing is sent, deleted or paid. Inbox access is read-only plus an optional label you click. One click can't block an official brand domain.
-- **Abuse limits.** Requests are capped at 40 KB and rate-limited per IP and per user. The app ships with security headers and no browser source maps, and no secrets reach the client.
 
 ## Accounts and inbox connection
 
@@ -123,14 +162,15 @@ flowchart LR
 3. **Credentials → Create credentials → OAuth client ID → Web application**. Authorized redirect URI: `https://teger-agent.vercel.app/api/auth/google/callback` (plus `http://localhost:3000/api/auth/google/callback` for local dev).
 4. In Vercel → Project **teger-agent** → Settings → Environment Variables, add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `APP_URL=https://teger-agent.vercel.app`, then redeploy. `/api/health` will show `google_oauth: "configured"`.
 
-## Run it
+## Run it locally
 
 ```bash
-npm install
-cp .env.example .env.local   # add SERV_API_KEY and AUTH_SECRET
+npm ci
+cp .env.example .env.local   # SERV_API_KEY (optional: deterministic planner without it), AUTH_SECRET
 npm run dev                  # http://localhost:3000
-npm test                     # mocked SERV + offline fixtures + auth/history/inbox routes
-LIVE=1 npx vitest run tests/live.serv.test.ts   # optional: real SERV calls
+npm run check                # lint + typecheck + tests + eval (CI also runs the build)
+LIVE=1 npm run eval          # optional: the eval with real SERV (needs SERV_API_KEY + network)
+EVAL_WRITE=1 LIVE=1 npm run eval   # regenerate docs/EVAL.md
 # optional: end-to-end IMAP test against a local hoodiecrow-imap server
 IMAP_IT=1 HOODIECROW_PATH=/path/to/node_modules/hoodiecrow-imap npx vitest run tests/imap.integration.test.ts
 ```
@@ -150,10 +190,11 @@ IMAP_IT=1 HOODIECROW_PATH=/path/to/node_modules/hoodiecrow-imap npx vitest run t
 | `PARALLEL_API_KEY` | no | Web brand research |
 | `INSTABOX_API_KEY` / `INSTABOX_SCREENSHOT_URL` | no | Isolated screenshots; without them, previews report "unavailable" |
 | `TEGER_OFFLINE` | no | `1` disables outbound lookups |
+| `TEGER_IMAP_ALLOW_PRIVATE` | tests only | Lets the IMAP integration test reach a local server (ignored unless `NODE_ENV=test`) |
 
 ## API
 
-- `POST /api/agent` with `{ "message": { "sender", "reply_to", "subject", "headers", "body" } }` streams NDJSON events (`start`, `step`, `final`, `saved`). `final.result` is strict JSON: `verdict`, `banner`, `risk_score`, `confidence`, `top_reasons[]`, `what_to_do[]`, `learned[]`, `trace[]`, `model`, `planner`, `usage`. Identity comes from the session cookie or the `x-teger-guest` header.
+- `POST /api/agent` with `{ "message": { "sender", "reply_to", "subject", "headers", "body" } }` (or just `{ "message": { "body": "suspicious-link.example/login" } }` for a link check) streams NDJSON events (`start`, `step`, `final`, `saved`). `final.result` is strict JSON: `verdict`, `banner`, `risk_score`, `confidence`, `top_reasons[]`, `what_to_do[]`, `learned[]`, `trace[]`, `model`, `planner`, `planner_note`, `mode` (`message` | `link`), `usage`. Identity comes from the session cookie or the `x-teger-guest` header.
 - `GET/POST/DELETE /api/feedback` reads or updates your allow/block lists. A trusted mark never overrides a critical signal.
 - `GET /api/history`, `GET/DELETE /api/history/:id`; `POST /api/auth/{signup,login,logout}`, `GET /api/auth/google`; `GET /api/me`.
 - `GET /api/inbox/composio` (start Composio Gmail connection), `GET /api/inbox/composio/callback`, `POST /api/inbox/composio/draft`, `POST /api/inbox/composio/auto`, `POST /api/webhooks/composio`.
@@ -162,14 +203,23 @@ IMAP_IT=1 HOODIECROW_PATH=/path/to/node_modules/hoodiecrow-imap npx vitest run t
 
 State-changing routes require a same-origin request and are rate-limited per IP.
 
+## Limitations (honest)
+
+- **Heuristic detection.** The detectors are rules, so novel lures can slip through and unusual legitimate mail can be over-flagged. That's why the best verdict is "No warning signs found", never "safe".
+- **Live lookups depend on third parties.** RDAP coverage varies by TLD (some registries rate-limit or block cloud IPs), and phishing hosts are often already offline, so `inspect_link` reports "unreachable". Neither case is turned into evidence.
+- **Brand research** uses a curated list of 23 commonly impersonated brands unless `PARALLEL_API_KEY` is set. Isolated screenshots need Instabox and are off on the public demo.
+- **SSRF guard** resolves DNS and then fetches, so a DNS-rebinding window remains (see [SECURITY.md](SECURITY.md)). Rate limits are per serverless instance.
+- **SERV is non-deterministic.** Plans and wording vary run to run; verdicts don't, because the model doesn't set them.
+- Outlook, Slack and a browser extension are not built yet.
+
 ## Screenshots
 
-`docs/screenshots/`: captured on the live deployment: landing (`01`), sign-in (`02`), empty workspace (`03`), guest analysis with verdict banner (`04`), dark mode with learning after reload (`05`), inbox connection (`06`), mobile (`07`, `08`), Inbox drawer with **Connect Gmail via Composio** (`09`), Connect Gmail on the live deployment landing on Google sign-in for Composio (`10`).
+All in `docs/screenshots/`, captured on the live deployment: landing with link box (`01`), sign-in (`02`), workspace empty state (`03`), email analysis (`04`), dark mode with learning (`05`), inbox connection (`06`), mobile (`07`, `08`), Connect Gmail via Composio (`09`, `10`), link check (`11`, full trace `12`).
 
-## Roadmap
+## Project docs
 
-Outlook via Composio, Slack protection, a Chrome extension that calls `/api/agent`, a team dashboard and an API for email-security vendors.
+[ARCHITECTURE](docs/ARCHITECTURE.md) · [EVAL](docs/EVAL.md) · [SECURITY](SECURITY.md) · [CONTRIBUTING](CONTRIBUTING.md) · [CHANGELOG](CHANGELOG.md) · [Hackathon write-up](SUBMISSION.md) · [Demo script](docs/DEMO_SCRIPT.md)
 
-## License and credits
+## License
 
-MIT. © 2026 DUKERS LTD (Emmanuel Effiom Duke). The deterministic detection rules are adapted from the author's earlier open-source Teger engine (MIT) and were ported to TypeScript and extended for this project.
+MIT © 2026 DUKERS LTD. The deterministic detection rules are adapted from the author's earlier open-source Teger engine (MIT), ported to TypeScript and extended for this project.
