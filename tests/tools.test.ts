@@ -98,3 +98,18 @@ describe("research_brand", () => {
     expect((await runTool("rm_rf", {}, s, { net: rdapNet(() => ({})), env: {} })).output.error).toBe("unknown_tool");
   });
 });
+
+describe("RDAP bootstrap", () => {
+  it("queries the registry's RDAP server from the IANA bootstrap for non-.com TLDs", async () => {
+    const seen: string[] = [];
+    const net = rdapNet((u) => {
+      seen.push(u);
+      if (u.includes("data.iana.org")) return { services: [[["top"], ["https://rdap.example-registry.top/top/"]]] };
+      return { events: [{ eventAction: "registration", eventDate: daysAgo(1) }] };
+    });
+    const s = initState(msg, { block: [], allow: [] });
+    const r = await runTool("inspect_domain", { why: "t", domain: "renew-mailbox.top" }, s, { net, env: {} });
+    expect(seen).toContain("https://rdap.example-registry.top/top/domain/renew-mailbox.top");
+    expect(r.evidence_added[0].category).toBe("newly_registered_domain");
+  });
+});

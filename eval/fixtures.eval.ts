@@ -1,6 +1,6 @@
 /**
- * Evaluation harness: runs every simulated attack (plus the benign control) through the
- * full agent and asserts the expected verdict.
+ * Evaluation harness: runs every simulated attack (plus the benign control) and the sample
+ * suspicious links through the full agent and asserts the expected verdict.
  *
  *   npm run eval                      offline: deterministic planner + compromised-LLM planner
  *   LIVE=1 npm run eval               also runs real SERV Reasoning (needs SERV_API_KEY, network)
@@ -12,7 +12,14 @@ import { afterAll, describe, expect, it } from "vitest";
 import { AgentResult, runAgent } from "../src/lib/agent/agent";
 import { offlineNet, realNet } from "../src/lib/agent/net";
 import { servClient, servModel } from "../src/lib/agent/serv";
-import { FIXTURES } from "../src/lib/fixtures";
+import { FIXTURES, SAMPLE_LINKS } from "../src/lib/fixtures";
+import type { MessageInput } from "../src/lib/engine/engine";
+
+/** 8 simulated emails + the sample suspicious links (URL-only "link check" input). */
+const CASES: { id: string; label: string; expected: string; message: MessageInput }[] = [
+  ...FIXTURES,
+  ...SAMPLE_LINKS.map((l) => ({ id: `link:${l.url}`, label: `Link: ${l.label}`, expected: l.expected, message: { body: l.url } })),
+];
 import { compromised } from "../tests/helpers/mocks";
 
 type Mode = "deterministic" | "compromised-llm" | "serv-live";
@@ -20,7 +27,7 @@ const live = process.env.LIVE === "1" && !!process.env.SERV_API_KEY;
 const modes: Mode[] = ["deterministic", "compromised-llm", ...(live ? (["serv-live"] as Mode[]) : [])];
 const rows: { mode: Mode; id: string; label: string; expected: string; got: string; risk: number; tools: string; serv_calls: number; tokens: number; ms: number; planner: string; top: string }[] = [];
 
-async function runMode(mode: Mode, f: (typeof FIXTURES)[number]): Promise<AgentResult> {
+async function runMode(mode: Mode, f: (typeof CASES)[number]): Promise<AgentResult> {
   const lists = { block: [], allow: [] };
   if (mode === "deterministic") return runAgent({ message: f.message, lists, toolEnv: { net: offlineNet, env: {} } });
   if (mode === "compromised-llm") return runAgent({ message: f.message, lists, toolEnv: { net: offlineNet, env: {} }, client: compromised() });
@@ -29,7 +36,7 @@ async function runMode(mode: Mode, f: (typeof FIXTURES)[number]): Promise<AgentR
 
 for (const mode of modes) {
   describe(`eval: ${mode}`, () => {
-    for (const f of FIXTURES) {
+    for (const f of CASES) {
       it(`${f.id} → ${f.expected}`, async () => {
         const t = Date.now();
         const r = await runMode(mode, f);
@@ -47,7 +54,7 @@ for (const mode of modes) {
 
 afterAll(() => {
   const order = (m: Mode) => modes.indexOf(m);
-  rows.sort((a, b) => order(a.mode) - order(b.mode) || FIXTURES.findIndex((f) => f.id === a.id) - FIXTURES.findIndex((f) => f.id === b.id));
+  rows.sort((a, b) => order(a.mode) - order(b.mode) || CASES.findIndex((f) => f.id === a.id) - CASES.findIndex((f) => f.id === b.id));
   const summary = modes.map((m) => { const rs = rows.filter((r) => r.mode === m); return `| ${m} | ${rs.filter((r) => r.got === r.expected).length}/${rs.length} |${m === "serv-live" ? ` ${rs.reduce((s, r) => s + r.serv_calls, 0)} calls, ${rs.reduce((s, r) => s + r.tokens, 0).toLocaleString("en-US")} tokens, median ${median(rs.map((r) => r.ms))} ms |` : " – |"}`; });
   const table = rows.map((r) => `| ${r.mode} | ${r.label} | \`${r.expected}\` | \`${r.got}\` ${r.got === r.expected ? "✅" : "❌"} | ${r.risk} | ${r.tools} | ${r.serv_calls} | ${r.tokens} | ${r.ms} |`);
   const md = `# Evaluation results

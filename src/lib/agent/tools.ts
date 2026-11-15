@@ -125,6 +125,23 @@ function senderAuthTool(state: AgentState): ToolResult {
   };
 }
 
+/** IANA RDAP bootstrap (TLD → registry RDAP base URL), cached per instance. Falls back to rdap.org. */
+let rdapBootstrap: Promise<Map<string, string>> | undefined;
+async function rdapBaseForTld(tld: string, te: ToolEnv): Promise<string | undefined> {
+  if (tld === "com" || tld === "net") return undefined;
+  rdapBootstrap ??= (async () => {
+    const data = (await te.net.fetchJson("https://data.iana.org/rdap/dns.json", undefined, 4000)) as { services?: [string[], string[]][] };
+    const m = new Map<string, string>();
+    for (const [tlds, urls] of data.services ?? []) {
+      const https = urls.find((u) => u.startsWith("https://"));
+      if (https) for (const t of tlds) m.set(t.toLowerCase(), https.endsWith("/") ? https : `${https}/`);
+    }
+    if (!m.size) throw new Error("empty bootstrap");
+    return m;
+  })().catch((e) => { rdapBootstrap = undefined; throw e; });
+  try { return (await rdapBootstrap).get(tld); } catch { return undefined; }
+}
+
 async function inspectDomainTool(domainArg: string, state: AgentState, te: ToolEnv): Promise<ToolResult> {
   const domain = domainArg.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
   const reg = registrableDomain(domain) ?? domain;
@@ -140,6 +157,8 @@ async function inspectDomainTool(domainArg: string, state: AgentState, te: ToolE
   try {
     const tld = reg.split(".").pop();
     const endpoints = [`https://rdap.org/domain/${encodeURIComponent(reg)}`];
+    const direct = tld ? await rdapBaseForTld(tld, te) : undefined;
+    if (direct) endpoints.unshift(`${direct}domain/${encodeURIComponent(reg)}`);
     if (tld === "com" || tld === "net") endpoints.unshift(`https://rdap.verisign.com/${tld}/v1/domain/${encodeURIComponent(reg)}`);
     let data: { events?: { eventAction: string; eventDate: string }[] } | undefined;
     let lastErr: unknown;

@@ -116,7 +116,8 @@ export const realNet: Net = {
     throw new Error(`Too many redirects (>${maxHops})`);
   },
   async fetchJson(url, init, timeoutMs = 6000) {
-    const res = await fetch(url, { ...init, redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+    const headers = { "user-agent": "TegerAgent/0.2 (+https://github.com/dukemawex/teger-agent)", ...(init?.headers as Record<string, string> | undefined) };
+    const res = await fetch(url, { ...init, headers, redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   },
