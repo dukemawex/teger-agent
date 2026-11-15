@@ -27,7 +27,7 @@ export async function DELETE(req: Request) {
   const c = await getConn(me.id);
   let remote = "";
   if (c?.provider === "composio") {
-    // Revoke at Composio too (best effort), so the Gmail grant doesn't linger.
+    // Revoke at Composio too (best effort), so Gmail access doesn't linger.
     try {
       const api = await composio();
       if (c.triggerId) await api.deleteTrigger(c.triggerId).catch(() => undefined);
