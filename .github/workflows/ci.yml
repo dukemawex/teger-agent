@@ -24,4 +24,5 @@ jobs:
         run: npm test
       - name: Evaluation (8 fixtures, deterministic + compromised-LLM modes)
         run: npm run eval
-      - run: npm run build
+      - name: Build (retried once: next/font fetches Google Fonts at build time)
+        run: npm run build || (sleep 10 && npm run build)
