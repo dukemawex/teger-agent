@@ -65,7 +65,7 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
     return () => clearInterval(t);
   }, [me?.inbox?.autoScan, refreshHistory]);
 
-  useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight }); }, [items]);
+  useEffect(() => { if (items.length) threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight }); }, [items]);
 
   const setTheme = (t: string) => { document.documentElement.dataset.theme = t; localStorage.setItem("teger_theme", t); setThemeState(t); };
 
@@ -236,7 +236,7 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
             )}
             <textarea
               rows={Math.min(10, Math.max(1, text.split("\n").length))}
-              placeholder="Connect your mail or paste a suspicious link (or a whole email)…"
+              placeholder="Connect your mail or paste a suspicious link…"
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
