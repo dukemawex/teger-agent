@@ -63,7 +63,9 @@ export function InboxDrawer({ me, onClose, onScan, refreshMe }: { me: Me; onClos
     setTotal(data.total ?? 0);
     if (data.error) setLoadErr(data.error);
   }
-  useEffect(() => { if (me.inbox) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [me.inbox?.account]);
+  // Reload only when the connected account changes (load() reads the current filter itself).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (me.inbox) load(); }, [me.inbox?.account]);
 
   async function toggleAuto() {
     setAutoBusy(true); setLoadErr("");

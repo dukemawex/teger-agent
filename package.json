@@ -10,7 +10,7 @@
     "start": "next start",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "eval": "vitest run --config vitest.eval.config.mts",
     "check": "npm run lint && npm run typecheck && npm test && npm run eval"
   },

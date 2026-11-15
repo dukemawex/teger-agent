@@ -2,7 +2,9 @@ import { allow, clientIp } from "../ratelimit";
 import { sameOrigin } from "./auth";
 
 export const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
-export const fail = (error: string, status = 400) => json({ error }, status);
+/** Error body of every API route: a machine code (e.g. "bad_request", "busy") or a short user-facing sentence. */
+export interface ApiError { error: string }
+export const fail = (error: string, status = 400) => json({ error } satisfies ApiError, status);
 
 export async function readJson(req: Request, max = 40_000): Promise<Record<string, unknown> | null> {
   const t = await req.text();
