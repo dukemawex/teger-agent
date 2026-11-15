@@ -8,7 +8,7 @@ Built by **DUKERS LTD (Emmanuel Effiom Duke)** for the **OpenServ SERV Hackathon
 
 ![Teger Agent workspace investigating a fake email-hosting renewal](docs/screenshots/04-analysis-light.png)
 
-Sign in (or continue as a guest), then connect an inbox, upload an `.eml`, paste a message, or press a simulated attack. Teger Agent:
+Sign in (or continue as a guest), then **connect Gmail in one click through [Composio](https://composio.dev)**, upload an `.eml`, paste a message, or press a simulated attack. Teger Agent:
 
 1. **Observes**: fences the message as untrusted data and extracts the links and domains in scope.
 2. **Plans**: SERV Reasoning decides which tools to call and says why.
@@ -64,7 +64,7 @@ flowchart LR
   EX --> OUT[Strict JSON: verdict, banner, reasons, what to do, trace]
   OUT --> U
   U -- Confirm scam / It's legit --> FB[/api/feedback/] --> MEM[(Upstash Redis: per-user lists + history)]
-  INBOX[Gmail OAuth / IMAP / .eml] --> API
+  INBOX[Gmail via Composio / IMAP / .eml] --> API
   MEM --> OBS
 ```
 
@@ -92,10 +92,23 @@ flowchart LR
 - **Guest mode**: no sign-up needed. Guest history and lists are kept for 7 days under a random guest id stored in the browser.
 - **Sign in with Google** (optional): appears automatically once `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are set.
 - **Inbox connection** (signed-in users), from the sidebar's **Inbox** drawer:
-  - **Gmail (OAuth)**: scopes `gmail.readonly`, `gmail.labels`, `gmail.modify` (the last one is used only to add a label). Lists recent messages, scans any of them, and on request applies `TEGER_DO_NOT_TRUST` or `TEGER_CAUTION`.
-  - **Any IMAP mailbox (works today)**: Gmail, Outlook, Fastmail, Yahoo, iCloud and others, using an **app password**. The password is encrypted at rest (AES-256-GCM). Gmail labels are applied as real labels; other servers get an IMAP keyword.
+  - **Gmail via Composio (primary)**: click **Connect Gmail**, approve on Google's consent screen hosted by Composio (Composio-managed OAuth, so no Google Cloud project is needed), and you land back in `/app` connected. Teger then lists your last 20 inbox messages with an offline **quick-triage badge** (and a **Suspicious only** filter), fetches any full message (headers + body) and runs the SERV agent on it, saves it to your history, and on request applies `TEGER_DO_NOT_TRUST` / `TEGER_CAUTION` (creating the label if missing). For payment / bank-detail change messages it can save a **verification draft** that you address to a contact you already trust and send yourself. **Disconnect** also revokes the connection at Composio.
+  - **Auto-scan new mail (optional)**: with a Composio webhook configured, a `GMAIL_NEW_GMAIL_MESSAGE` trigger posts to `/api/webhooks/composio` (signature verified); Teger scans the message, labels risky ones, and the result appears in History.
+  - **Any IMAP mailbox (fallback)**: Gmail, Outlook, Fastmail, Yahoo, iCloud and others, using an **app password**, encrypted at rest (AES-256-GCM).
+  - **Direct Google OAuth (optional)**: appears if you configure your own Google OAuth client.
   - **.eml upload or pasted raw source**: available to everyone, guests included.
-- Teger **never sends, moves or deletes** email.
+- Teger **never sends, moves or deletes** email. Composio sessions are pinned to an allow-list of seven Gmail tools (`GMAIL_FETCH_EMAILS`, `GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID`, `GMAIL_LIST_LABELS`, `GMAIL_CREATE_LABEL`, `GMAIL_ADD_LABEL_TO_EMAIL`, `GMAIL_CREATE_EMAIL_DRAFT`, `GMAIL_GET_PROFILE`), so send/delete/trash/forward tools are unavailable even to Teger's own code. Google tokens are held by Composio, never by Teger.
+
+### Enable Gmail via Composio (deployment owner, one time)
+
+1. In the [Composio dashboard](https://platform.composio.dev), open your project → **Settings → API keys** and create a key with these permissions (a default full-access key already has them):
+   - **Session management**: write
+   - **Connected accounts**: write (create links, verify, revoke on disconnect)
+   - **Tool execution**: write
+   - **Triggers**: write (only for auto-scan)
+2. In Vercel → Project **teger-agent** → Settings → Environment Variables, set `COMPOSIO_API_KEY`, then redeploy. `/api/health` shows `composio_gmail: "configured"`.
+3. No auth config is needed: Teger uses Composio's managed Gmail OAuth, which Composio creates automatically on the first connection.
+4. Optional auto-scan: Composio dashboard → **Webhooks** → add `https://teger-agent.vercel.app/api/webhooks/composio`, subscribe to trigger events, copy the signing secret into Vercel as `COMPOSIO_WEBHOOK_SECRET`, and redeploy. Then turn on **Auto-scan new mail** in the Inbox drawer.
 
 ### Connect Gmail over IMAP (no setup on our side)
 
@@ -130,7 +143,9 @@ IMAP_IT=1 HOODIECROW_PATH=/path/to/node_modules/hoodiecrow-imap npx vitest run t
 | `SERV_MODEL` | no | SERV catalog model id (default `gpt-5.4-mini`) |
 | `AUTH_SECRET` | yes in production | Signs sessions and encrypts stored IMAP passwords and OAuth tokens (`openssl rand -hex 32`) |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | yes in production | Accounts, history, lists, inbox connections (`KV_REST_API_*` also accepted). In-memory without them. |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Enables Sign in with Google and Gmail OAuth |
+| `COMPOSIO_API_KEY` | for Gmail | Composio project key (permissions above). Enables **Connect Gmail** |
+| `COMPOSIO_WEBHOOK_SECRET` | no | Verifies Composio trigger webhooks for auto-scan |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Optional direct Sign in with Google and Gmail OAuth |
 | `APP_URL` | no | Public base URL used to build the OAuth redirect URI |
 | `PARALLEL_API_KEY` | no | Web brand research |
 | `INSTABOX_API_KEY` / `INSTABOX_SCREENSHOT_URL` | no | Isolated screenshots; without them, previews report "unavailable" |
@@ -141,7 +156,8 @@ IMAP_IT=1 HOODIECROW_PATH=/path/to/node_modules/hoodiecrow-imap npx vitest run t
 - `POST /api/agent` with `{ "message": { "sender", "reply_to", "subject", "headers", "body" } }` streams NDJSON events (`start`, `step`, `final`, `saved`). `final.result` is strict JSON: `verdict`, `banner`, `risk_score`, `confidence`, `top_reasons[]`, `what_to_do[]`, `learned[]`, `trace[]`, `model`, `planner`, `usage`. Identity comes from the session cookie or the `x-teger-guest` header.
 - `GET/POST/DELETE /api/feedback` reads or updates your allow/block lists. A trusted mark never overrides a critical signal.
 - `GET /api/history`, `GET/DELETE /api/history/:id`; `POST /api/auth/{signup,login,logout}`, `GET /api/auth/google`; `GET /api/me`.
-- `GET/DELETE /api/inbox`, `POST /api/inbox/imap`, `POST /api/inbox/message`, `POST /api/inbox/label`, `POST /api/parse-email`.
+- `GET /api/inbox/composio` (start Composio Gmail connection), `GET /api/inbox/composio/callback`, `POST /api/inbox/composio/draft`, `POST /api/inbox/composio/auto`, `POST /api/webhooks/composio`.
+- `GET/DELETE /api/inbox` (`?filter=suspicious`), `POST /api/inbox/imap`, `GET /api/inbox/message?ref=`, `POST /api/inbox/label`, `POST /api/parse-email`.
 - `GET /api/health` reports which integrations are configured (never their values).
 
 State-changing routes require a same-origin request and are rate-limited per IP.
@@ -152,7 +168,7 @@ State-changing routes require a same-origin request and are rate-limited per IP.
 
 ## Roadmap
 
-Outlook (Microsoft Graph) OAuth, Slack protection, a Chrome extension that calls `/api/agent`, a team dashboard and an API for email-security vendors.
+Outlook via Composio, Slack protection, a Chrome extension that calls `/api/agent`, a team dashboard and an API for email-security vendors.
 
 ## License and credits
 

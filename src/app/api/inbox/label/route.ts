@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   const c = await getConn(me.id);
   if (!c) return fail("not_connected", 404);
   try {
-    return json({ ok: true, how: await applyLabel(c, ref, label), label });
+    return json({ ok: true, how: await applyLabel(c, me.id, ref, label), label });
   } catch (e) {
     return fail(`Couldn't apply the label (${String((e as Error).message).slice(0, 80)}).`, 502);
   }

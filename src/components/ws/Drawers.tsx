@@ -6,14 +6,17 @@ export interface Me {
   user: { id: string; email: string; name: string; provider: string } | null;
   guest: boolean;
   lists: { block: string[]; allow: string[] };
-  inbox: { provider: string; account: string; host?: string; connectedAt: string } | null;
+  inbox: { provider: string; account: string; host?: string; connectedAt: string; autoScan?: boolean } | null;
   google: boolean;
+  composio: boolean;
+  autoScanAvailable: boolean;
   serv: boolean;
   model: string;
   memory: string;
 }
 
-interface InboxMsg { ref: string; from: string; subject: string; date?: string; snippet?: string }
+interface InboxMsg { ref: string; from: string; subject: string; date?: string; snippet?: string; triage?: { verdict: string; risk: number; top?: string } }
+const TRIAGE: Record<string, string> = { malicious: "Likely scam", suspicious: "Suspicious", no_threat_detected: "Looks normal" };
 
 const PRESETS: Record<string, { host: string; help: string; url: string }> = {
   gmail: { host: "imap.gmail.com", help: "Turn on 2-Step Verification, then create an app password.", url: "https://myaccount.google.com/apppasswords" },
@@ -49,14 +52,26 @@ export function InboxDrawer({ me, onClose, onScan, refreshMe }: { me: Me; onClos
   const [err, setErr] = useState("");
   const [msgs, setMsgs] = useState<InboxMsg[] | null>(null);
   const [loadErr, setLoadErr] = useState("");
+  const [suspiciousOnly, setSuspiciousOnly] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [autoBusy, setAutoBusy] = useState(false);
 
-  async function load() {
+  async function load(onlySuspicious = suspiciousOnly) {
     setMsgs(null); setLoadErr("");
-    const { data } = await api<{ messages: InboxMsg[]; error?: string }>("/api/inbox");
+    const { data } = await api<{ messages: InboxMsg[]; total?: number; error?: string }>(`/api/inbox${onlySuspicious ? "?filter=suspicious" : ""}`);
     setMsgs(data.messages ?? []);
+    setTotal(data.total ?? 0);
     if (data.error) setLoadErr(data.error);
   }
   useEffect(() => { if (me.inbox) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [me.inbox?.account]);
+
+  async function toggleAuto() {
+    setAutoBusy(true); setLoadErr("");
+    const { ok, data } = await api<{ error?: string }>("/api/inbox/composio/auto", { method: "POST", body: JSON.stringify({ enabled: !me.inbox?.autoScan }) });
+    setAutoBusy(false);
+    if (!ok) setLoadErr(data.error ?? "Couldn't change auto-scan.");
+    refreshMe();
+  }
 
   async function connect(e: React.FormEvent) {
     e.preventDefault();
@@ -93,17 +108,28 @@ export function InboxDrawer({ me, onClose, onScan, refreshMe }: { me: Me; onClos
         <>
           <div className="option">
             <h4><span className="status-dot on" /> Connected: {me.inbox.account}</h4>
-            <p>{me.inbox.provider === "gmail" ? "Gmail via Google OAuth" : `IMAP · ${me.inbox.host}`} · read-only, plus optional TEGER_* labels. Teger never sends, moves or deletes mail.</p>
-            <div style={{ display: "flex", gap: 8 }}><button className="btn ghost sm" onClick={load}>Refresh</button><button className="btn ghost sm" onClick={disconnect}>Disconnect</button></div>
+            <p>{me.inbox.provider === "composio" ? "Gmail via Composio" : me.inbox.provider === "gmail" ? "Gmail via Google OAuth" : `IMAP · ${me.inbox.host}`} · reads mail, plus optional TEGER_* labels{me.inbox.provider === "composio" ? " and verification drafts" : ""}. Teger never sends, moves or deletes mail.</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn ghost sm" onClick={() => load()}>Refresh</button>
+              <button className={`btn sm ${suspiciousOnly ? "" : "ghost"}`} onClick={() => { const v = !suspiciousOnly; setSuspiciousOnly(v); load(v); }}>{suspiciousOnly ? "✓ Suspicious only" : "Suspicious only"}</button>
+              <button className="btn ghost sm" onClick={disconnect}>Disconnect</button>
+            </div>
+            {me.inbox.provider === "composio" && (
+              <div className="auto-row">
+                <label className="switch"><input type="checkbox" checked={!!me.inbox.autoScan} disabled={autoBusy || !me.autoScanAvailable} onChange={toggleAuto} /><i /></label>
+                <span><b>Auto-scan new mail</b><br /><em className="hint">{me.autoScanAvailable ? "New inbox messages are scanned and risky ones get a TEGER_* label. Results appear in History." : "Needs the Composio webhook on this deployment; manual scans work now."}</em></span>
+              </div>
+            )}
           </div>
           {loadErr && <div className="err">{loadErr}</div>}
           {!msgs && <p className="hint"><span className="spin" /> Loading recent messages…</p>}
-          {msgs && msgs.length === 0 && !loadErr && <p className="hint">No messages in the inbox.</p>}
+          {msgs && msgs.length === 0 && !loadErr && <p className="hint">{suspiciousOnly ? `Quick triage found nothing suspicious in the last ${total} messages.` : "No messages in the inbox."}</p>}
+          {msgs && msgs.length > 0 && <p className="hint">Last {total} messages · badges come from Teger&apos;s offline quick triage; Scan runs the full SERV agent.</p>}
           {msgs?.map((m) => (
             <div className="mail" key={m.ref}>
               <div>
                 <div className="f">{m.from}{m.date ? ` · ${new Date(m.date).toLocaleString()}` : ""}</div>
-                <div className="s">{m.subject}</div>
+                <div className="s">{m.triage && <span className={`tri t-${m.triage.verdict}`} title={m.triage.top ?? ""}>{TRIAGE[m.triage.verdict]}</span>}{m.subject}</div>
                 {m.snippet && <div className="p">{m.snippet}</div>}
               </div>
               <button className="btn sm" onClick={() => onScan(m)}>Scan</button>
@@ -112,11 +138,18 @@ export function InboxDrawer({ me, onClose, onScan, refreshMe }: { me: Me; onClos
         </>
       ) : (
         <>
-          <div className="option">
-            <h4>Gmail (Google sign-in)</h4>
-            <p>Read-only access to your inbox plus permission to add TEGER_DO_NOT_TRUST / TEGER_CAUTION labels.</p>
-            {me.google ? <a className="btn" href="/api/auth/google?mode=gmail">Connect Gmail</a> : <p className="hint">This deployment doesn&apos;t have Google OAuth credentials yet. Use the IMAP option below; it works with Gmail too.</p>}
+          <div className="option feature">
+            <h4>Gmail <span className="pill-mini">via Composio</span></h4>
+            <p>One click: approve access on Google&apos;s consent screen (hosted by Composio) and come straight back. Teger lists your recent mail, scans any message with the SERV agent, and can add TEGER_DO_NOT_TRUST / TEGER_CAUTION labels. Your Google tokens stay with Composio, never in Teger. Teger never sends or deletes mail.</p>
+            {me.composio ? <a className="btn" href="/api/inbox/composio">Connect Gmail</a> : <p className="hint"><span className="status-dot" /> Composio isn&apos;t configured on this deployment yet (COMPOSIO_API_KEY). Use IMAP or an .eml file below.</p>}
           </div>
+          {me.google && (
+            <div className="option">
+              <h4>Gmail (direct Google OAuth)</h4>
+              <p>Alternative connection using this deployment&apos;s own Google OAuth client.</p>
+              <a className="btn ghost" href="/api/auth/google?mode=gmail">Connect with Google</a>
+            </div>
+          )}
           <form className="option" onSubmit={connect}>
             <h4>Any mailbox via IMAP</h4>
             <p>Works with Gmail, Outlook.com, Yahoo, iCloud, Fastmail and more. Use an <b>app password</b>, not your normal password. It&apos;s stored encrypted (AES-256-GCM).</p>

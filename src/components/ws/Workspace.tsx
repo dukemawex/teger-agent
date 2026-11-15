@@ -14,6 +14,11 @@ const NOTICES: Record<string, string> = {
   google_not_configured: "Google sign-in isn't configured on this deployment yet.",
   oauth_failed: "Google sign-in didn't complete. Please try again.",
   gmail_connected: "Gmail connected. Open Inbox to scan messages.",
+  composio_not_configured: "Gmail via Composio isn't configured on this deployment yet (COMPOSIO_API_KEY). Use IMAP or an .eml file for now.",
+  composio_failed: "Gmail wasn't connected. The Composio consent didn't complete; please try again.",
+  composio_permissions: "Composio refused to create the Gmail link: this deployment's COMPOSIO_API_KEY is missing permissions (Session management, Connected accounts and Tool execution need write access).",
+  composio_error: "Couldn't reach Composio to connect Gmail. Please try again in a moment.",
+  busy: "Too many attempts. Wait a minute and try again.",
   gmail_scopes_missing: "Gmail wasn't connected: the required permissions weren't approved.",
   signed_in: "Signed in with Google.",
   signin_required: "Sign in first, then connect Gmail.",
@@ -52,6 +57,13 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
     if (n === "gmail_connected") setDrawer("inbox");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-scan feed: poll history while Composio auto-scan is on.
+  useEffect(() => {
+    if (!me?.inbox?.autoScan) return;
+    const t = setInterval(refreshHistory, 20_000);
+    return () => clearInterval(t);
+  }, [me?.inbox?.autoScan, refreshHistory]);
 
   useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight }); }, [items]);
 
@@ -195,7 +207,7 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
               items.map((it) => (
                 <div key={it.key}>
                   <UserBubble item={it} />
-                  <AgentReply item={it} onToast={notify} onLearn={(lists) => setMe((m) => (m ? { ...m, lists } : m))} />
+                  <AgentReply item={it} onToast={notify} onLearn={(lists) => setMe((m) => (m ? { ...m, lists } : m))} canDraft={me?.inbox?.provider === "composio"} />
                 </div>
               ))
             )}

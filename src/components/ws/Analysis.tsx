@@ -22,7 +22,7 @@ export interface Item {
 
 const PHASES = ["observe", "plan", "investigate", "decide", "explain"];
 const PHASE_LABEL: Record<string, string> = { observe: "Observe", plan: "Plan", investigate: "Investigate", decide: "Decide", explain: "Explain" };
-const SRC: Record<string, string> = { paste: "Pasted", fixture: "Simulated attack", eml: "Email file", imap: "Inbox (IMAP)", gmail: "Gmail" };
+const SRC: Record<string, string> = { paste: "Pasted", fixture: "Simulated attack", eml: "Email file", imap: "Inbox (IMAP)", gmail: "Gmail", "gmail-auto": "Gmail · auto-scan" };
 
 export function UserBubble({ item }: { item: Item }) {
   const m = item.message;
@@ -38,10 +38,11 @@ export function UserBubble({ item }: { item: Item }) {
   );
 }
 
-export function AgentReply({ item, onLearn, onToast }: { item: Item; onLearn: (lists: { block: string[]; allow: string[] }) => void; onToast: (s: string) => void }) {
+export function AgentReply({ item, onLearn, onToast, canDraft = false }: { item: Item; onLearn: (lists: { block: string[]; allow: string[] }) => void; onToast: (s: string) => void; canDraft?: boolean }) {
   const r = item.result;
   const [fb, setFb] = useState("");
   const [labeled, setLabeled] = useState("");
+  const [drafted, setDrafted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [json, setJson] = useState(false);
   const reached = new Set<string>(item.trace.map((s) => s.phase));
@@ -56,6 +57,14 @@ export function AgentReply({ item, onLearn, onToast }: { item: Item; onLearn: (l
     if (data.ok) setFb(label === "scam" ? `Teger learned: ${data.domain} is now on your block list. Future messages from it are blocked immediately.` : `Teger learned: ${data.domain} is on your trusted list. Critical signals still override it.`);
     else if (data.reason === "official_domain") setFb("That's an official brand domain, so Teger won't block it from one click. Report the message to your provider instead.");
     else setFb("Couldn't save that feedback.");
+  }
+
+  const paymentCase = !!r && r.verdict !== "no_threat_detected" && /\b(iban|bank (details|account)|account number|wire|payment details|remittance|invoice|routing number|sort code)\b/i.test(`${item.message.subject ?? ""} ${item.message.body ?? ""}`);
+  async function draft() {
+    setBusy(true);
+    const { ok, data } = await api<{ error?: string }>("/api/inbox/composio/draft", { method: "POST", body: JSON.stringify({ subject: item.message.subject ?? "", sender: item.message.sender ?? "" }) });
+    setBusy(false);
+    if (ok) { setDrafted(true); onToast("Verification draft saved in Gmail Drafts. Add a contact you already trust, review, and send it yourself."); } else onToast(data.error ?? "Couldn't create the draft.");
   }
 
   async function label() {
@@ -139,6 +148,9 @@ export function AgentReply({ item, onLearn, onToast }: { item: Item; onLearn: (l
               <button className="btn ghost sm" disabled={busy || !r.sender_domain} onClick={() => feedback("legit")}>It&apos;s legit</button>
               {item.inboxRef && (r.verdict === "malicious" || r.verdict === "suspicious") && (
                 <button className="btn ghost sm" disabled={busy || !!labeled} onClick={label}>{labeled ? `✓ Labeled ${labeled}` : `Label ${r.verdict === "malicious" ? "TEGER_DO_NOT_TRUST" : "TEGER_CAUTION"} in mailbox`}</button>
+              )}
+              {item.inboxRef && canDraft && paymentCase && (
+                <button className="btn ghost sm" disabled={busy || drafted} onClick={draft}>{drafted ? "✓ Draft saved" : "Create verification draft"}</button>
               )}
               <button className="linkbtn" onClick={() => setJson(!json)}>{json ? "Hide" : "Show"} JSON</button>
             </div>

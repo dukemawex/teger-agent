@@ -273,3 +273,19 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 @media (max-width: 860px) { .mob-logo { display: block; } }
 
 @media (max-width: 640px) { .hide-sm { display: none; } }
+
+/* Composio inbox */
+.option.feature { border-color: color-mix(in srgb, var(--ember1, #ef3b0b) 35%, var(--line)); }
+.pill-mini { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: linear-gradient(90deg, #ef3b0b, #ffd43b); color: #1a1714; margin-left: 6px; vertical-align: middle; }
+.tri { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 6px; margin-right: 6px; vertical-align: 1px; }
+.tri.t-malicious { background: #fde2dc; color: #b42318; }
+.tri.t-suspicious { background: #fff1c2; color: #8a5a00; }
+.tri.t-no_threat_detected { background: var(--green-bg); color: var(--green); }
+.auto-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; font-size: 13px; }
+.switch { position: relative; width: 34px; height: 20px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch i { position: absolute; inset: 0; border-radius: 999px; background: var(--line2); transition: .2s; cursor: pointer; }
+.switch i::after { content: ""; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: .2s; }
+.switch input:checked + i { background: linear-gradient(90deg, #ef3b0b, #ffb000); }
+.switch input:checked + i::after { transform: translateX(14px); }
+.switch input:disabled + i { opacity: .5; cursor: not-allowed; }
