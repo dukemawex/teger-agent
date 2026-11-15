@@ -23,6 +23,12 @@ export function isBlockedIp(ip: string): boolean {
     if (l === "::" || l === "::1") return true;
     const mapped = l.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
     if (mapped) return isBlockedIp(mapped[1]);
+    // IPv4-mapped / IPv4-compatible in hex form, e.g. ::ffff:7f00:1 or ::7f00:1
+    const hex = l.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (hex) {
+      const hi = parseInt(hex[1], 16), lo = parseInt(hex[2], 16);
+      return isBlockedIp(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+    }
     return /^(fc|fd|fe8|fe9|fea|feb|ff|2001:db8|64:ff9b)/.test(l);
   }
   return true;

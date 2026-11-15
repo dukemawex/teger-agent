@@ -1,13 +1,27 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  test:
+  check:
+    name: lint · typecheck · test · eval · build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
+      - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - name: Unit + integration tests (SERV mocked, no network, no keys)
+        run: npm test
+      - name: Evaluation (8 fixtures, deterministic + compromised-LLM modes)
+        run: npm run eval
       - run: npm run build

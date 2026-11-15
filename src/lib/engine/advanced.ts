@@ -51,7 +51,7 @@ export function textHomoglyphs(text: string, c: FindingCollector) {
 
 function parseDates(text: string): { date: Date; index: number; raw: string }[] {
   const out: { date: Date; index: number; raw: string }[] = [];
-  for (const m of text.matchAll(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/g)) {
+  for (const m of text.matchAll(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})\b/g)) {
     const d = Number(m[1]), mo = Number(m[2]), y = Number(m[3]);
     if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) out.push({ date: new Date(Date.UTC(y, mo - 1, d)), index: m.index!, raw: m[0] });
   }

@@ -25,7 +25,7 @@ class RedisKV implements KV {
   backend = "upstash-redis" as const;
   constructor(private r: Redis) {}
   async get<T>(k: string) { return (await this.r.get<T>(P + k)) ?? null; }
-  async set(k: string, v: unknown, ttl?: number) { ttl ? await this.r.set(P + k, v, { ex: ttl }) : await this.r.set(P + k, v); }
+  async set(k: string, v: unknown, ttl?: number) { if (ttl) await this.r.set(P + k, v, { ex: ttl }); else await this.r.set(P + k, v); }
   async setNx(k: string, v: unknown) { return (await this.r.set(P + k, v, { nx: true })) === "OK"; }
   async del(k: string) { await this.r.del(P + k); }
   async sadd(k: string, m: string) { await this.r.sadd(P + k, m); }

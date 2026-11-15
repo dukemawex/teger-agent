@@ -17,7 +17,7 @@ export function urlHeuristics(u: ParsedUrl, c: FindingCollector) {
   if (u.hasUserinfo) {
     c.add({ category: "userinfo_in_url", severity: "high", tactic: "link_manipulation", description: "Link hides its real destination behind an '@' (user-info) prefix.", indicator: u.href.slice(0, 80) });
   }
-  if (u.unicodeHost && /[^\x00-\x7f]/.test(u.unicodeHost)) {
+  if (u.unicodeHost && /[^\u0020-\u007e]/.test(u.unicodeHost)) {
     const latin = /[a-z]/i.test(u.unicodeHost);
     const nonLatin = /[\u0370-\u03ff\u0400-\u04ff]/.test(u.unicodeHost);
     c.add(latin && nonLatin

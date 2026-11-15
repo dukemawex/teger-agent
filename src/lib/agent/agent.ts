@@ -8,7 +8,7 @@ import type { MessageInput } from "../engine/engine";
 import type { Decision } from "../engine/policy";
 import type { Evidence, Verdict } from "../engine/types";
 import type { UserLists } from "./memory";
-import { AgentState, decideTool, initState, runTool, TOOL_SCHEMAS, ToolEnv } from "./tools";
+import { initState, runTool, TOOL_SCHEMAS, ToolEnv } from "./tools";
 
 export const SERV_BASE_URL = "https://inference-api.openserv.ai/v1";
 export const DEFAULT_MODEL = "gpt-5.4-mini";
@@ -163,7 +163,8 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
         const calls = msg.tool_calls ?? [];
         if (!planned) {
           planned = true;
-          const planText = msg.content?.trim() || `Plan: ${calls.map((c) => c.function.name).join(" → ") || "no tools"}`;
+          const toolPlan = `Plan: ${calls.map((c) => c.function.name).join(" → ") || "no tools"}`;
+          const planText = msg.content?.trim() && !REASSURANCE.test(msg.content) ? msg.content.trim() : toolPlan;
           push({ phase: "plan", output: planText.slice(0, 400), ms: Date.now() - t, by: "serv" });
         }
         messages.push({ role: "assistant", content: msg.content ?? null, ...(calls.length ? { tool_calls: calls } : {}) });
@@ -224,14 +225,12 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
       usage.prompt_tokens += resp.usage?.prompt_tokens ?? 0;
       usage.completion_tokens += resp.usage?.completion_tokens ?? 0;
       usage.total_tokens += resp.usage?.total_tokens ?? 0;
-      const parsed = JSON.parse(resp.choices[0]?.message?.content ?? "{}");
-      if (typeof parsed.summary === "string" && !/\bsafe\b/i.test(parsed.summary)) summary = parsed.summary.slice(0, 400);
-      if (Array.isArray(parsed.reasons)) {
-        const valid = parsed.reasons.filter((r: { evidence_id?: string }) => ranked.some((e) => e.id === r.evidence_id)).slice(0, 4);
-        if (valid.length || !ranked.length) reasons = valid.map((r: { evidence_id: string; title?: string; explanation?: string }) => ({ evidence_id: r.evidence_id, title: String(r.title ?? "").slice(0, 80), explanation: String(r.explanation ?? "").slice(0, 300) }));
-      }
-      if (Array.isArray(parsed.what_to_do) && parsed.what_to_do.length) whatToDo = parsed.what_to_do.slice(0, 4).map((s: unknown) => String(s).slice(0, 200));
-      push({ phase: "explain", output: "SERV Reasoning wrote the plain-language explanation (verdict locked by policy; quotes taken from Teger evidence).", ms: Date.now() - t, by: "serv" });
+      const parsed = JSON.parse(resp.choices[0]?.message?.content ?? "{}") as unknown;
+      const ex = sanitizeExplanation(parsed, decision.verdict, ranked.map((e) => e.id));
+      if (ex.summary) summary = ex.summary;
+      if (ex.reasons && (ex.reasons.length || !ranked.length)) reasons = ex.reasons;
+      if (ex.what_to_do?.length) whatToDo = ex.what_to_do;
+      push({ phase: "explain", output: `SERV Reasoning wrote the plain-language explanation (verdict locked by policy; quotes taken from Teger evidence).${ex.rejected ? ` Guardrail dropped ${ex.rejected} item(s) that reassured, linked out, cited unknown evidence or urged acting on the message.` : ""}`, ms: Date.now() - t, by: "serv" });
     } catch (e) {
       push({ phase: "explain", output: `Explanation fell back to Teger templates (${(e as Error).message.slice(0, 80)}).`, ms: Date.now() - t, by: "teger" });
     }
@@ -266,6 +265,58 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
   };
   emit({ type: "final", result });
   return result;
+}
+
+/** Words the explainer may never use: the verdict is the policy's, and Teger never calls a message safe. */
+export const REASSURANCE = /\b(safe|legit(imate)?|harmless|genuine|benign|trustworthy|nothing to worry|no (?:threat|risk)|not (?:a )?(?:scam|phishing))\b/i;
+const HAS_LINK = /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|net|org|io|co|top|xyz|info|biz|ru|cn|app|dev|me|it|uk|de)\b/i;
+const ENCOURAGES = /\b(click|open|pay|reply|respond|enter|scan|approve|download|log ?in|sign ?in|send|transfer|renew|confirm)\b/i;
+const NEGATED = /\b(don'?t|do not|never|avoid|no|without|instead|before|only (?:after|via|through)|yourself|official|directly|already (?:have|know|trust)|trusted)\b/i;
+
+export interface SanitizedExplanation {
+  summary?: string;
+  reasons?: { evidence_id: string; title: string; explanation: string }[];
+  what_to_do?: string[];
+  rejected: number;
+}
+
+/**
+ * Guardrail for SERV explainer output. The model's text is treated as untrusted:
+ * it may only reference real evidence ids, may not reassure the user (no "safe"),
+ * may not include links, and for risky verdicts may not tell the user to act on the message.
+ */
+export function sanitizeExplanation(raw: unknown, verdict: Verdict, evidenceIds: string[]): SanitizedExplanation {
+  const out: SanitizedExplanation = { rejected: 0 };
+  if (!raw || typeof raw !== "object") return out;
+  const p = raw as { summary?: unknown; reasons?: unknown; what_to_do?: unknown };
+  const risky = verdict === "malicious" || verdict === "suspicious" || verdict === "unknown";
+  const clean = (v: unknown, n: number): string | undefined => {
+    if (typeof v !== "string" || !v.trim()) return undefined;
+    if (REASSURANCE.test(v) || HAS_LINK.test(v)) { out.rejected++; return undefined; }
+    return v.trim().slice(0, n);
+  };
+  out.summary = clean(p.summary, 400);
+  if (Array.isArray(p.reasons)) {
+    out.reasons = [];
+    for (const r of p.reasons.slice(0, 8)) {
+      const rr = (r ?? {}) as { evidence_id?: unknown; title?: unknown; explanation?: unknown };
+      if (typeof rr.evidence_id !== "string" || !evidenceIds.includes(rr.evidence_id)) { out.rejected++; continue; }
+      const title = clean(rr.title, 80);
+      const explanation = clean(rr.explanation, 300);
+      if (!title || !explanation) continue;
+      if (out.reasons.length < 4) out.reasons.push({ evidence_id: rr.evidence_id, title, explanation });
+    }
+  }
+  if (Array.isArray(p.what_to_do)) {
+    out.what_to_do = [];
+    for (const s of p.what_to_do.slice(0, 8)) {
+      const step = clean(s, 200);
+      if (!step) continue;
+      if (risky && ENCOURAGES.test(step) && !NEGATED.test(step)) { out.rejected++; continue; }
+      if (out.what_to_do.length < 4) out.what_to_do.push(step);
+    }
+  }
+  return out;
 }
 
 const TITLES: Record<string, string> = {
