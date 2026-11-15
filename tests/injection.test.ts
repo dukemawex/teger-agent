@@ -73,3 +73,15 @@ describe("sanitizeExplanation", () => {
     expect(sanitizeExplanation(null, "malicious", [])).toEqual({ rejected: 0 });
   });
 });
+
+describe("sanitizeExplanation tolerates schema drift without weakening the guardrail", () => {
+  it("accepts evidence/id/verification_steps synonyms", () => {
+    const ex = sanitizeExplanation({ summary: "Fake PayPal site.", evidence: [{ id: "ev-2", title: "Deceptive wording", explanation: "Uses login terms to appear legitimate." }], verification_steps: ["Open PayPal by typing the address yourself."] }, "malicious", ["ev-2"]);
+    expect(ex.reasons).toHaveLength(1);
+    expect(ex.what_to_do).toHaveLength(1);
+    expect(ex.rejected).toBe(0);
+  });
+  it.each(["This email looks legitimate.", "It is probably harmless.", "Nothing to worry about.", "This is not a scam.", "Seems fine to me", "Verdict: no_threat_detected"])("rejects reassurance %j", (summary) => {
+    expect(sanitizeExplanation({ summary }, "malicious", []).summary).toBeUndefined();
+  });
+});

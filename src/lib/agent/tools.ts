@@ -271,7 +271,8 @@ async function previewTool(urlArg: string, state: AgentState, te: ToolEnv): Prom
 export function decideTool(state: AgentState): ToolResult {
   if (!state.ran.has("analyze_message")) analyzeTool(state); // the verdict always includes the local detectors
   const sd = senderDomain(state.message.sender);
-  const sreg = sd ? registrableDomain(sd) : undefined;
+  // No sender (e.g. a pasted link): the first link's domain is what the user taught Teger about.
+  const sreg = sd ? registrableDomain(sd) : state.urls[0]?.registrableDomain;
   const linkRegs = state.urls.map((u) => u.registrableDomain).filter(Boolean) as string[];
   const blockedHit = [sd, sreg, ...linkRegs].find((d) => d && state.lists.block.includes(d));
   const learnedAdded: Evidence[] = [];

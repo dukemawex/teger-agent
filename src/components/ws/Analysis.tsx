@@ -22,7 +22,7 @@ export interface Item {
 
 const PHASES = ["observe", "plan", "investigate", "decide", "explain"];
 const PHASE_LABEL: Record<string, string> = { observe: "Observe", plan: "Plan", investigate: "Investigate", decide: "Decide", explain: "Explain" };
-const SRC: Record<string, string> = { paste: "Pasted", fixture: "Simulated attack", eml: "Email file", imap: "Inbox (IMAP)", gmail: "Gmail", "gmail-auto": "Gmail · auto-scan" };
+const SRC: Record<string, string> = { link: "Link check", paste: "Pasted", fixture: "Simulated attack", eml: "Email file", imap: "Inbox (IMAP)", gmail: "Gmail", "gmail-auto": "Gmail · auto-scan" };
 
 export function UserBubble({ item }: { item: Item }) {
   const m = item.message;

@@ -42,3 +42,9 @@ export function looksLikeRawEmail(s: string): boolean {
 }
 
 export const VERDICT_LABEL: Record<string, string> = { malicious: "Malicious", suspicious: "Suspicious", unknown: "Unknown", no_threat_detected: "No threat detected" };
+
+/** Client-side hint only (labels the bubble "Link check"); the server re-detects link-only input itself. */
+export function looksLikeLinkOnly(s: string): boolean {
+  const tokens = s.trim().split(/\s+/).filter(Boolean);
+  return tokens.length > 0 && tokens.length <= 5 && tokens.every((t) => /^<?(?:https?:\/\/\S+|(?:www\.)?(?:[\p{L}\p{N}-]+\.)+\p{L}{2,24}(?:[:/?#]\S*)?)>?$/u.test(t) && !/^\d+(\.\d+)+$/.test(t));
+}

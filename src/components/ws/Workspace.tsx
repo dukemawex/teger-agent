@@ -1,12 +1,12 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { Fixture } from "@/lib/fixtures";
+import { SAMPLE_LINKS, type Fixture } from "@/lib/fixtures";
 import type { MessageInput } from "@/lib/engine/engine";
 import { Logo, Mark, Pixels } from "../Logo";
 import { AgentReply, Item, UserBubble } from "./Analysis";
 import { InboxDrawer, Me, SettingsDrawer } from "./Drawers";
-import { api, guestId, looksLikeRawEmail, streamAgent, VERDICT_LABEL } from "./client";
+import { api, guestId, looksLikeLinkOnly, looksLikeRawEmail, streamAgent, VERDICT_LABEL } from "./client";
 
 interface HistItem { id: string; createdAt: string; source: string; subject: string; sender: string; verdict: string; risk: number }
 
@@ -54,7 +54,7 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
     refreshMe(); refreshHistory();
     const n = params.get("notice");
     if (n && NOTICES[n]) notify(NOTICES[n]);
-    if (n === "gmail_connected") setDrawer("inbox");
+    if (n === "gmail_connected" || params.get("connect") === "1") setDrawer("inbox");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -96,9 +96,11 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
 
   useEffect(() => {
     const sim = params.get("simulate");
-    if (sim && me && !autoRan.current) {
-      const f = fixtures.find((x) => x.id === sim);
+    const link = params.get("link")?.trim().slice(0, 2000);
+    if (me && !autoRan.current) {
+      const f = sim ? fixtures.find((x) => x.id === sim) : undefined;
       if (f) { autoRan.current = true; analyze(f.message, "fixture"); }
+      else if (link) { autoRan.current = true; analyze({ body: link }, looksLikeLinkOnly(link) ? "link" : "paste"); }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me]);
@@ -107,7 +109,7 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
     const t = text.trim();
     if (!t && !fields.subject.trim()) return;
     let message: MessageInput = { ...fields, body: t };
-    let source = "paste";
+    let source = !fields.sender.trim() && !fields.subject.trim() && !fields.headers.trim() && looksLikeLinkOnly(t) ? "link" : "paste";
     if (looksLikeRawEmail(t)) {
       const { ok, data } = await api<{ message: MessageInput }>("/api/parse-email", { method: "POST", body: JSON.stringify({ raw: t }) });
       if (ok) { message = data.message; source = "eml"; }
@@ -189,8 +191,17 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
             {items.length === 0 ? (
               <div className="empty">
                 <Mark size={44} />
-                <h1>What should Teger investigate?</h1>
-                <p>Paste a suspicious email (raw source with headers works best), drop an <code>.eml</code> file, scan your connected inbox, or simulate an attack.</p>
+                <h1>Connect your mail or paste a suspicious link</h1>
+                <p>Teger investigates links and emails with SERV Reasoning, then a deterministic engine gives the verdict. Paste a link or a whole email below, drop an <code>.eml</code> file, or try a sample.</p>
+                <div className="start-row">
+                  <button className="btn ember" onClick={() => setDrawer("inbox")}>{me?.inbox ? "✉ Scan my mail" : "✉ Connect mail"}</button>
+                  {SAMPLE_LINKS.map((l) => (
+                    <button key={l.url} className="linkchip" onClick={() => analyze({ body: l.url }, "link")} disabled={running} title={`Check ${l.url}`}>
+                      <span className="lc-k">Try a link</span><code>{l.url.replace(/^https?:\/\//, "")}</code>
+                    </button>
+                  ))}
+                </div>
+                <div className="sub-k">Or simulate an attack</div>
                 <div className="fx-grid">
                   {fixtures.map((f) => (
                     <button key={f.id} className={`fx ${f.expected === "no_threat_detected" ? "benign" : ""}`} onClick={() => analyze(f.message, "fixture")} disabled={running}>
@@ -199,7 +210,6 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
                   ))}
                 </div>
                 <div className="quick">
-                  <button className="btn ghost sm" onClick={() => setDrawer("inbox")}>{me?.inbox ? "Scan my inbox" : "Connect an inbox"}</button>
                   <button className="btn ghost sm" onClick={() => fileRef.current?.click()}>Upload .eml</button>
                 </div>
               </div>
@@ -226,17 +236,17 @@ export default function Workspace({ fixtures }: { fixtures: Fixture[] }) {
             )}
             <textarea
               rows={Math.min(10, Math.max(1, text.split("\n").length))}
-              placeholder="Paste a suspicious email or message…"
+              placeholder="Connect your mail or paste a suspicious link (or a whole email)…"
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
-              aria-label="Message to investigate"
+              aria-label="Link or message to investigate"
             />
             <div className="bar">
               <button className={`tool ${showFields ? "on" : ""}`} onClick={() => setShowFields(!showFields)} title="Add sender, subject and headers">✉ Details</button>
               <button className="tool" onClick={() => fileRef.current?.click()} title="Upload an .eml file">⎙ .eml</button>
-              <button className="tool" onClick={() => setDrawer("inbox")} title="Scan your inbox">⇣ Inbox</button>
               <span className="grow" />
+              <button className="btn ember sm connect" onClick={() => setDrawer("inbox")} title={me?.inbox ? "Scan messages from your connected mailbox" : "Connect Gmail or any IMAP mailbox"}>✉ {me?.inbox ? "Scan mail" : "Connect mail"}</button>
               <span className="hint" style={{ marginRight: 6 }}>⌘/Ctrl + Enter</span>
               <button className="send" onClick={send} disabled={running || (!text.trim() && !fields.subject.trim())} aria-label="Investigate">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1714" strokeWidth="2.6" strokeLinecap="square"><path d="M12 19V5M5 12l7-7 7 7" /></svg>

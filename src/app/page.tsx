@@ -26,10 +26,17 @@ export default function Home() {
         <div>
           <span className="badge"><Pixels sm /> Built on SERV Reasoning · SERV Hackathon 02</span>
           <h1>Stop phishing <span className="em">before</span> anyone clicks.</h1>
-          <p className="lead">Teger Agent is an autonomous investigator for suspicious email. Connect your inbox or paste a message. SERV Reasoning plans the checks, real tools gather evidence, and a deterministic engine gives a verdict that a prompt-injected email can&apos;t talk its way out of.</p>
+          <p className="lead">Teger Agent is an autonomous investigator for suspicious links and email. Connect your mail, paste a suspicious link or a whole message. SERV Reasoning plans the checks, real tools gather evidence, and a deterministic engine gives a verdict that a prompt-injected email can&apos;t talk its way out of.</p>
+          <form className="hero-check" action="/app" method="get">
+            <label htmlFor="hero-link">Connect your mail or paste a suspicious link</label>
+            <div className="row">
+              <input id="hero-link" name="link" className="input" placeholder="paypa1-secure-login.top/verify" autoComplete="off" spellCheck={false} maxLength={2000} required />
+              <button className="btn ember" type="submit">Check link →</button>
+            </div>
+          </form>
           <div className="cta">
-            <a className="btn ember" href="/app?simulate=fake-renewal">Simulate an attack →</a>
-            <a className="btn ghost" href="/signin">Create an account</a>
+            <a className="btn" href="/app?connect=1">✉ Connect mail</a>
+            <a className="btn ghost" href="/app?simulate=fake-renewal">Simulate an attack</a>
           </div>
         </div>
         <PixelShield />
@@ -62,7 +69,7 @@ export default function Home() {
 
       <section className="cta-band">
         <div className="in">
-          <h2>Paste a suspicious email. See the agent think.</h2>
+          <h2>Connect your mail or paste a suspicious link. See the agent think.</h2>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <a className="btn ember" href="/app">Try as guest</a>
             <a className="btn ghost" href="/signin">Sign in</a>

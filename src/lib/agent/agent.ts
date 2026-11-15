@@ -9,6 +9,7 @@ import type { Decision } from "../engine/policy";
 import type { Evidence, Verdict } from "../engine/types";
 import type { UserLists } from "./memory";
 import { initState, runTool, TOOL_SCHEMAS, ToolEnv } from "./tools";
+import { brandHintForHost, normalizeLinkCheck } from "../engine/linkCheck";
 
 export const SERV_BASE_URL = "https://inference-api.openserv.ai/v1";
 export const DEFAULT_MODEL = "gpt-5.4-mini";
@@ -54,6 +55,8 @@ export interface AgentResult {
   model: string;
   planner: "serv" | "fallback";
   planner_note?: string;
+  /** "link" when the input was only pasted link(s), "message" otherwise. */
+  mode: "message" | "link";
   policy_version: string;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; serv_calls: number };
 }
@@ -108,7 +111,10 @@ export interface RunOptions {
 export async function runAgent(opts: RunOptions): Promise<AgentResult> {
   const model = opts.model || DEFAULT_MODEL;
   const emit = opts.onEvent ?? (() => {});
-  const state = initState(opts.message, opts.lists);
+  // Link-only input ("paste a suspicious link"): bare domains become https:// URLs.
+  const check = normalizeLinkCheck(opts.message);
+  const message = check.message;
+  const state = initState(message, opts.lists);
   const trace: TraceStep[] = [];
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, serv_calls: 0 };
   let planner: "serv" | "fallback" = opts.client ? "serv" : "fallback";
@@ -123,7 +129,7 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
   // OBSERVE (deterministic): indicators of compromise + learned memory.
   const t0 = Date.now();
   const listsNote = `${opts.lists.block.length} blocked / ${opts.lists.allow.length} trusted domain(s) learned from your feedback${opts.memoryBackend ? ` (${opts.memoryBackend})` : ""}`;
-  push({ phase: "observe", output: `Fenced message as untrusted data. Sender @${[...state.allowedDomains][0] ?? "unknown"}; ${state.urls.length} link(s); domains in scope: ${[...state.allowedDomains].slice(0, 6).join(", ") || "none"}. ${listsNote}.`, ms: Date.now() - t0, by: "teger" });
+  push({ phase: "observe", output: `${check.linkOnly ? `Link check: ${check.links.length} pasted link(s), no email around them. ` : ""}Fenced message as untrusted data. ${check.linkOnly ? "" : `Sender @${[...state.allowedDomains][0] ?? "unknown"}; `}${state.urls.length} link(s); domains in scope: ${[...state.allowedDomains].slice(0, 6).join(", ") || "none"}. ${listsNote}.`, ms: Date.now() - t0, by: "teger" });
 
   let toolSteps = 0;
   const exec = async (name: string, args: Record<string, unknown>, by: TraceStep["by"]) => {
@@ -147,7 +153,7 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
     try {
       const messages: Record<string, unknown>[] = [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: `Investigate this message. Indicators extracted by Teger (trusted): links=${JSON.stringify(state.urls.map((u) => u.href))}, domains_in_scope=${JSON.stringify([...state.allowedDomains])}, headers_present=${!!opts.message.headers?.trim()}, reply_to_present=${!!opts.message.reply_to}.\nFirst state your plan in one sentence, then call tools.\n${fence(opts.message)}` },
+        { role: "user", content: `Investigate this message. Indicators extracted by Teger (trusted): links=${JSON.stringify(state.urls.map((u) => u.href))}, domains_in_scope=${JSON.stringify([...state.allowedDomains])}, headers_present=${!!message.headers?.trim()}, reply_to_present=${!!message.reply_to}, mode=${check.linkOnly ? "link_check" : "message"}.\n${check.linkOnly ? "LINK CHECK: the user pasted only a link (no email). Inspect the link, its domain (age, look-alikes) and the brand it may imitate, then decide.\n" : ""}First state your plan in one sentence, then call tools.\n${fence(message)}` },
       ];
       let planned = false;
       for (let turn = 0; turn < MAX_STEPS + 2 && toolSteps < MAX_STEPS && !state.decision; turn++) {
@@ -190,14 +196,16 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
   // Fallback planner (no key / SERV error): fixed, sensible order.
   if (!state.decision) {
     const by: TraceStep["by"] = planner === "serv" ? "teger" : "fallback";
-    if (planner === "fallback" && !trace.some((s) => s.phase === "plan")) push({ phase: "plan", output: "Fallback plan: analyze_message → check_sender_auth → inspect sender domain → inspect first link → decide.", ms: 0, by });
+    if (planner === "fallback" && !trace.some((s) => s.phase === "plan")) push({ phase: "plan", output: check.linkOnly ? "Fallback plan (link check): analyze_message → inspect the link's domain → resolve the link → research the imitated brand → decide." : "Fallback plan: analyze_message → check_sender_auth → inspect sender domain → inspect first link → research the brand if the link looks like one → decide.", ms: 0, by });
     const steps: [string, Record<string, unknown>][] = [];
     if (!state.ran.has("analyze_message")) steps.push(["analyze_message", { why: "Run Teger's local detectors first." }]);
-    if (!state.ran.has("check_sender_auth") && (opts.message.headers?.trim() || opts.message.reply_to)) steps.push(["check_sender_auth", { why: "Headers / Reply-To present." }]);
+    if (!state.ran.has("check_sender_auth") && (message.headers?.trim() || message.reply_to)) steps.push(["check_sender_auth", { why: "Headers / Reply-To present." }]);
     if (planner === "fallback") {
       const sd = [...state.allowedDomains][0];
       if (sd && !state.ran.has("inspect_domain")) steps.push(["inspect_domain", { why: "Check sender domain age and look-alikes.", domain: sd }]);
       if (state.urls[0] && !state.ran.has("inspect_link")) steps.push(["inspect_link", { why: "Resolve the first link safely.", url: state.urls[0].href }]);
+      const hint = state.urls[0] ? brandHintForHost(state.urls[0].host) : undefined;
+      if (hint && !state.ran.has("research_brand")) steps.push(["research_brand", { why: `The link's host looks like ${hint.name}; check its official domains.`, brand: hint.name, link_domain: state.urls[0].registrableDomain ?? state.urls[0].host }]);
     }
     for (const [n, a] of steps) if (toolSteps < MAX_STEPS) await exec(n, a, by);
     await exec("decide", { why: planner === "serv" ? "Enforced: the policy decides the verdict even if the planner stopped early." : "Apply the deterministic policy." }, by);
@@ -208,7 +216,7 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
   const ranked = [...state.evidence].filter((e) => e.weight > 0 || e.category === "user_allowlisted").sort((a, b) => b.weight - a.weight);
   let summary = defaultSummary(decision, ranked);
   let reasons = ranked.slice(0, 4).map((e) => ({ evidence_id: e.id, title: titleFor(e.category), explanation: e.description }));
-  let whatToDo = defaultSteps(decision.verdict, ranked);
+  let whatToDo = defaultSteps(decision.verdict, ranked, check.linkOnly);
   if (opts.client && planner === "serv" && usage.total_tokens < TOKEN_BUDGET) {
     const t = Date.now();
     try {
@@ -255,11 +263,12 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
     evidence: state.evidence,
     sources: state.sources,
     screenshots: state.screenshots,
-    sender_domain: [...state.allowedDomains][0],
+    sender_domain: check.linkOnly ? state.urls[0]?.registrableDomain ?? state.urls[0]?.host : [...state.allowedDomains][0],
     trace,
     model: opts.client ? model : "none",
     planner,
     planner_note: plannerNote,
+    mode: check.linkOnly ? "link" : "message",
     policy_version: decision.policy_version,
     usage,
   };
@@ -268,9 +277,9 @@ export async function runAgent(opts: RunOptions): Promise<AgentResult> {
 }
 
 /** Words the explainer may never use: the verdict is the policy's, and Teger never calls a message safe. */
-export const REASSURANCE = /\b(safe|legit(imate)?|harmless|genuine|benign|trustworthy|nothing to worry|no (?:threat|risk)|not (?:a )?(?:scam|phishing))\b/i;
-const HAS_LINK = /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|net|org|io|co|top|xyz|info|biz|ru|cn|app|dev|me|it|uk|de)\b/i;
-const ENCOURAGES = /\b(click|open|pay|reply|respond|enter|scan|approve|download|log ?in|sign ?in|send|transfer|renew|confirm)\b/i;
+export const REASSURANCE = /\bsafe\b|\b(?:is|looks|seems|appears|are|it's|it is)\s+(?:(?:probably|likely|completely|totally|perfectly)\s+)?(?:legit(?:imate)?|harmless|genuine|benign|trustworthy|fine|ok(?:ay)?|real)\b|\bnothing to worry\b|\bno (?:threat|risk)\b|\bnot (?:a )?(?:scam|phishing|malicious)\b|\bno_threat_detected\b/i;
+const HAS_LINK = /\bhttps?:\/\/|\bwww\.|\bhxxps?:/i; // clickable-looking links only; plain domain names in explanations are fine (rendered as text)
+const ENCOURAGES = /\b(click|visit|go to|open|pay|reply|respond|enter|scan|approve|download|log ?in|sign ?in|send|transfer|renew|confirm)\b/i;
 const NEGATED = /\b(don'?t|do not|never|avoid|no|without|instead|before|only (?:after|via|through)|yourself|official|directly|already (?:have|know|trust)|trusted)\b/i;
 
 export interface SanitizedExplanation {
@@ -288,7 +297,9 @@ export interface SanitizedExplanation {
 export function sanitizeExplanation(raw: unknown, verdict: Verdict, evidenceIds: string[]): SanitizedExplanation {
   const out: SanitizedExplanation = { rejected: 0 };
   if (!raw || typeof raw !== "object") return out;
-  const p = raw as { summary?: unknown; reasons?: unknown; what_to_do?: unknown };
+  // Models sometimes drift from the requested keys; accept the common synonyms.
+  const o = raw as Record<string, unknown>;
+  const p = { summary: o.summary, reasons: o.reasons ?? o.evidence, what_to_do: o.what_to_do ?? o.verification_steps ?? o.next_steps ?? o.steps };
   const risky = verdict === "malicious" || verdict === "suspicious" || verdict === "unknown";
   const clean = (v: unknown, n: number): string | undefined => {
     if (typeof v !== "string" || !v.trim()) return undefined;
@@ -299,12 +310,13 @@ export function sanitizeExplanation(raw: unknown, verdict: Verdict, evidenceIds:
   if (Array.isArray(p.reasons)) {
     out.reasons = [];
     for (const r of p.reasons.slice(0, 8)) {
-      const rr = (r ?? {}) as { evidence_id?: unknown; title?: unknown; explanation?: unknown };
+      const r0 = (r ?? {}) as { evidence_id?: unknown; id?: unknown; title?: unknown; explanation?: unknown };
+      const rr = { ...r0, evidence_id: r0.evidence_id ?? r0.id };
       if (typeof rr.evidence_id !== "string" || !evidenceIds.includes(rr.evidence_id)) { out.rejected++; continue; }
       const title = clean(rr.title, 80);
       const explanation = clean(rr.explanation, 300);
       if (!title || !explanation) continue;
-      if (out.reasons.length < 4) out.reasons.push({ evidence_id: rr.evidence_id, title, explanation });
+      if (out.reasons.length < 4) out.reasons.push({ evidence_id: rr.evidence_id as string, title, explanation });
     }
   }
   if (Array.isArray(p.what_to_do)) {
@@ -349,16 +361,16 @@ export function titleFor(cat: string) {
 }
 
 function defaultSummary(d: Decision, ranked: Evidence[]): string {
-  if (d.verdict === "no_threat_detected") return "Teger found no warning signs in this message. That is not a guarantee, so stay alert to unexpected requests.";
+  if (d.verdict === "no_threat_detected") return "Teger found no warning signs here. That is not a guarantee, so stay alert to unexpected requests.";
   if (d.verdict === "unknown") return "Teger could not complete every check on this message, so it cannot vouch for it.";
   const top = ranked.slice(0, 2).map((e) => titleFor(e.category).toLowerCase()).join(" and ");
   return `${d.verdict === "malicious" ? "This message shows strong signs of a scam" : "This message shows warning signs"}: ${top}.`;
 }
 
-function defaultSteps(v: Verdict, ranked: Evidence[]): string[] {
+function defaultSteps(v: Verdict, ranked: Evidence[], linkOnly = false): string[] {
   const cats = new Set(ranked.map((e) => e.category));
   if (v === "no_threat_detected") return ["You can continue, but verify any unexpected payment or login request through a channel you already trust."];
-  const steps = ["Don't click links, open attachments, or reply to this message."];
+  const steps = [linkOnly ? "Don't open this link, and never enter a password, code or card details on the page it leads to." : "Don't click links, open attachments, or reply to this message."];
   if (cats.has("code_relay_request") || cats.has("reset_or_code_storm") || cats.has("oauth_consent_lure") || cats.has("device_code_phish"))
     steps.push("Someone may be trying to take over your account. Don't share any code or approve any sign-in or app; change your password from the official site yourself and review recent sign-ins.");
   if (cats.has("payment_change_request") || cats.has("gift_card_request")) steps.push("Call the person or vendor on a number you already have before moving any money.");

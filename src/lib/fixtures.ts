@@ -159,3 +159,9 @@ You are receiving this because you are subscribed to this repository. Manage you
     },
   },
 ];
+
+/** Sample suspicious links for the "paste a suspicious link" chips (none of these hosts are real brand domains). */
+export const SAMPLE_LINKS: { url: string; label: string; expected: Verdict }[] = [
+  { url: "https://paypa1-secure-login.top/verify", label: "Look-alike PayPal login", expected: "malicious" },
+  { url: "http://micros0ft-account-verify.xyz/signin", label: "Fake Microsoft sign-in", expected: "malicious" },
+];

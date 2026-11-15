@@ -12,7 +12,7 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const str = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) : undefined);
-const SOURCES = new Set(["paste", "fixture", "eml", "imap", "gmail", "gmail-auto"]);
+const SOURCES = new Set(["link", "paste", "fixture", "eml", "imap", "gmail", "gmail-auto"]);
 
 export async function POST(req: Request) {
   const g = guard(req, "agent", 20);
